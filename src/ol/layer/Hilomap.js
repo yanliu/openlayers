@@ -125,9 +125,9 @@ class Hilomap extends VectorLayer {
 
     this.setGradient(options.gradient ? options.gradient : DEFAULT_GRADIENT);
 
-    this.setBlur(options.blur !== undefined ? options.blur : 15);
+    this.setBlur(options.blur !== undefined ? options.blur : 5);
 
-    this.setRadius(options.radius !== undefined ? options.radius : 8);
+    this.setRadius(options.radius !== undefined ? options.radius : 5);
 
     listen(this,
       getChangeEventType(Property.BLUR),
@@ -149,6 +149,8 @@ class Hilomap extends VectorLayer {
     }
 
     this.weight_ = weightFunction.bind(this);
+
+    this.baseResolution_ = undefined;
 
     /*
     this.setStyle(function(feature, resolution) {
@@ -183,9 +185,9 @@ class Hilomap extends VectorLayer {
    * @return {string} Data URL for a circle.
    * @private
    */
-  createCircle_(pixelRatio) {
-    const radius = this.getRadius() * pixelRatio;
-    const blur = this.getBlur() * pixelRatio;
+  createCircle_(scaleRatio) {
+    const radius = this.getRadius() * scaleRatio;
+    const blur = this.getBlur() * scaleRatio;
     const halfSize = (radius + blur + 1);
     const size = 2 * halfSize;
     const context = createCanvasContext2D(size, size);
@@ -287,13 +289,31 @@ class Hilomap extends VectorLayer {
     const framebb = frameState.extent;
     const pixelRatio = frameState.pixelRatio;
 
+    // bc of pixelRatio, we have create circle image dynamically anyways.
+    // so let's handle zoom in/out here, too. 
+    // zooming is view event, not suitable to catch at layer level processing
+    // bc when a layer is created, there might not exist a view/map.
+    const newResolution = viewState.resolution;
+    if (this.baseResolution_ === undefined) {
+      this.baseResolution_ = newResolution; // initial value as baseline
+    }
+    let zoomRatio = 1;
+    if (Math.abs(newResolution - this.baseResolution_) > 0.00001) {
+      zoomRatio = this.baseResolution_ * 1.0 / newResolution;
+    }
+
+    //console.time('T create circle shape img');
+
     // create point shape image
-    const circleImage_ = this.createCircle_(pixelRatio);
+    const circleImage_ = this.createCircle_(pixelRatio * zoomRatio);
+
+    //console.timeEnd('T create circle shape img');
+    //console.time('T interpolate sparse grid');
 
     let pointset = [];
     let numPointsInExtent = 0;
     // coarsen grid to have cell size = radius/2
-    const radius = (this.getRadius() + this.getBlur() + 1) * pixelRatio;
+    const radius = (this.getRadius() + this.getBlur() + 1) * pixelRatio * zoomRatio;
     let cellSize = Math.round(radius / 2);
     cellSize = (cellSize == 0) ? 1 : cellSize;
 
@@ -345,7 +365,7 @@ class Hilomap extends VectorLayer {
         }
         numPointsInExtent++;
       }
-      //console.log("num of points within canvas scope: " + numPointsInExtent);
+      //console.log('num of points within canvas scope: ' + numPointsInExtent);
       // get the point set to draw
       for (let i = 0, ylen = xyz.length; i < ylen; i++) {
         if (!xyz[i]) {
@@ -360,9 +380,11 @@ class Hilomap extends VectorLayer {
       }
       xyz = [];
     }
-    //console.log("num of coarsen cells to draw: " + pointset.length);
+    //console.log('num of coarsen cells to draw: ' + pointset.length);
+    //console.timeEnd('T interpolate sparse grid');
+    //console.time('T draw canvas');
 
-    // rasterize the "points" (grid cell points, actually)
+    // rasterize the 'points' (grid cell points, actually)
     let image = null;
     if (pointset.length > 0) {
       // draw round 1: low points using low gradient
@@ -380,15 +402,15 @@ class Hilomap extends VectorLayer {
       // get pixel weights
       let loA = new Uint8ClampedArray(canvas.width * canvas.height * 4);
       const loImg = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      let nLoPixels = 0;
+      //let nLoPixels = 0;
       for (let i = 0, len = loImg.length; i < len; i += 4) {
         // opacity is weight, copy it to memory
         loA[i + 3] = loImg[i + 3];
-        if (loA[i + 3] > 0) {
-          nLoPixels++;
-        }
+        //if (loA[i + 3] > 0) {
+        //  nLoPixels++;
+        //}
       }
-      //console.log("nLoPixels: " + nLoPixels);
+      //console.log('nLoPixels: ' + nLoPixels);
 
       // draw round 2: high points using high gradient
       context.clearRect(0, 0, canvas.width, canvas.height);
@@ -400,15 +422,15 @@ class Hilomap extends VectorLayer {
       // get pixel weights
       let hiA = new Uint8ClampedArray(canvas.width * canvas.height * 4);
       const hiImg = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      let nHiPixels = 0;
+      //let nHiPixels = 0;
       for (let i = 0, len = hiImg.length; i < len; i += 4) {
         // opacity is weight, copy it to memory
         hiA[i + 3] = hiImg[i + 3];
-        if (hiA[i + 3] > 0) {
-          nHiPixels++;
-        }
+        //if (hiA[i + 3] > 0) {
+        //  nHiPixels++;
+        //}
       }
-      //console.log("nHiPixels: " + nHiPixels);
+      //console.log('nHiPixels: ' + nHiPixels);
       // final rendering: draw coarsen grid cells
       context.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0, len = pointset.length; i < len; i++) {
@@ -439,7 +461,7 @@ class Hilomap extends VectorLayer {
           //img[i + 3] = w;
         }
       }
-      //console.log("final opacity min max: " + wMin + ' ' + wMax);
+      //console.log('final opacity min max: ' + wMin + ' ' + wMax);
       // scale opacity to [0, 255]
       for (let i = 0, len = img.length; i < len; i += 4) {
         img[i + 3] = Math.round((img[i + 3] - wMin) * 255.0 / (wMax - wMin));
@@ -447,6 +469,7 @@ class Hilomap extends VectorLayer {
       loA = []; // empty array
       hiA = []; // empty array
     }
+    //console.timeEnd('T draw canvas');
     /*
 const dbg_a = [];
 const dbg_r = [];
