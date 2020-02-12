@@ -2,6 +2,9 @@
  * @module ol/layer/Hilomap
  * A variation of Heatmap that highlights the low and high extremes.
  * API is the same as Heatmap, but the gradient should be [low, ..., neutral, ..., high] colors.
+ * This Hilomap revises the default OL Heatmap, but implements a similar heatmap interpolation algorithm
+ * in Leaflet (i.e., simpleheat (https://github.com/mourner/simpleheat) and
+ * Leaflet.heat (https://github.com/Leaflet/Leaflet.heat)).
  * Author: Yan Liu https://github.com/yanliu
  * Date: 02/10/2020
  */
@@ -150,7 +153,9 @@ class Hilomap extends VectorLayer {
 
     this.weight_ = weightFunction.bind(this);
 
-    this.baseResolution_ = undefined;
+    // if consistentView, radius/blur and coarsened grid cell size will scale with zoom level
+    this.consistentView = (options.consistentView === undefined) ? 1 : options.consistentView;
+    this.baseResolution_ = undefined; // inital res, used to track zoom scaling ratio
 
     /*
     this.setStyle(function(feature, resolution) {
@@ -183,6 +188,7 @@ class Hilomap extends VectorLayer {
 
   /**
    * @return {string} Data URL for a circle.
+   * @param {number} scaleRatio Scaling ratio for radius/blur.
    * @private
    */
   createCircle_(scaleRatio) {
@@ -290,7 +296,7 @@ class Hilomap extends VectorLayer {
     const pixelRatio = frameState.pixelRatio;
 
     // bc of pixelRatio, we have create circle image dynamically anyways.
-    // so let's handle zoom in/out here, too. 
+    // so let's handle zoom in/out here, too.
     // zooming is view event, not suitable to catch at layer level processing
     // bc when a layer is created, there might not exist a view/map.
     const newResolution = viewState.resolution;
@@ -298,7 +304,7 @@ class Hilomap extends VectorLayer {
       this.baseResolution_ = newResolution; // initial value as baseline
     }
     let zoomRatio = 1;
-    if (Math.abs(newResolution - this.baseResolution_) > 0.00001) {
+    if (this.consistentView && Math.abs(newResolution - this.baseResolution_) > 0.00001) {
       zoomRatio = this.baseResolution_ * 1.0 / newResolution;
     }
 
@@ -312,8 +318,10 @@ class Hilomap extends VectorLayer {
 
     let pointset = [];
     let numPointsInExtent = 0;
-    // coarsen grid to have cell size = radius/2
+    // the coarsened grid has cell size = radius/2
     const radius = (this.getRadius() + this.getBlur() + 1) * pixelRatio * zoomRatio;
+    // TODO: as radius is binded to several scaling ratios, it seems cellSize value
+    // should be decoupled from radius value. it is a methodology question.
     let cellSize = Math.round(radius / 2);
     cellSize = (cellSize == 0) ? 1 : cellSize;
 
@@ -323,7 +331,8 @@ class Hilomap extends VectorLayer {
       //if (layers[i].layer instanceof ol.layer.Hilomap) {
       //  layer = layers[i].layer;
       //}
-      if ((layers[ii].layer instanceof Hilomap) && layers[ii].layer.getVisible()) {
+      //if ((layers[ii].layer instanceof Hilomap) && layers[ii].layer.getVisible()) {
+      if ((layers[ii].layer === this) && layers[ii].layer.getVisible()) {
         // TODO: multiple Hilomap layers
         layer = layers[ii].layer;
         break;
@@ -380,7 +389,7 @@ class Hilomap extends VectorLayer {
       }
       xyz = [];
     }
-    //console.log('num of coarsen cells to draw: ' + pointset.length);
+    //console.log('num of coarsened cells to draw: ' + pointset.length);
     //console.timeEnd('T interpolate sparse grid');
     //console.time('T draw canvas');
 
@@ -431,7 +440,7 @@ class Hilomap extends VectorLayer {
         //}
       }
       //console.log('nHiPixels: ' + nHiPixels);
-      // final rendering: draw coarsen grid cells
+      // final rendering: draw coarsened grid cells
       context.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0, len = pointset.length; i < len; i++) {
         const p = pointset[i];
