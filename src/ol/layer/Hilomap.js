@@ -153,8 +153,8 @@ class Hilomap extends VectorLayer {
 
     this.weight_ = weightFunction.bind(this);
 
-    // if consistentView, radius/blur and coarsened grid cell size will scale with zoom level
-    this.consistentView = (options.consistentView === undefined) ? 1 : options.consistentView;
+    // if staticView, radius/blur and coarsened grid cell size will scale with zoom level
+    this.staticView = (options.staticView === undefined) ? 1 : options.staticView;
     this.baseResolution_ = undefined; // inital res, used to track zoom scaling ratio
 
     /*
@@ -304,7 +304,7 @@ class Hilomap extends VectorLayer {
       this.baseResolution_ = newResolution; // initial value as baseline
     }
     let zoomRatio = 1;
-    if (this.consistentView && Math.abs(newResolution - this.baseResolution_) > 0.00001) {
+    if (this.staticView && Math.abs(newResolution - this.baseResolution_) > 0.00001) {
       zoomRatio = this.baseResolution_ * 1.0 / newResolution;
     }
 
